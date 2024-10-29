@@ -1,0 +1,47 @@
+[project]
+name = "happy-migrations"
+version = "0.0.0"
+authors = [
+  { name="Simon Piechutowski", email="szymonpiechutowski@gmail.com" },
+]
+
+description = "Hopefully no tears."
+readme = "readme.md"
+requires-python = ">=3.12"
+
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.6.1",
+    "pytest~=8.3.2",
+    "pre-commit~=4.0.1",
+]
+
+[project.urls]
+Homepage = "https://github.com/Zimzozaur/happy-migrations"
+Issues = "https://github.com/Zimzozaur/happy-migrations/issues"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.sdist]
+paths = ["src/happy_migrations"]
+
+[tool.hatch.build.targets.wheel]
+paths = ["src/happy_migrations"]
+
+[tool.ruff]
+exclude = ["tests"]
+
+ignore = [
+    "D203",
+    "D213",
+]
+
+[tool.pytest.ini_options]
+python_files = "test_*.py"
