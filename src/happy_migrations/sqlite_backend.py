@@ -28,14 +28,16 @@ first_step = Query(
 __queries__: tuple = first_step,
 """
 
+MIG_IS_NOT_TUPLE = "__queries__ is not a tuple inside migration: "
+
 
 CREATE_HAPPY_STATUS_TABLE = """
 CREATE TABLE IF NOT EXISTS _happy_status (
-    id_migrations_status integer primary key autoincrement,
+    id_mig_status integer primary key autoincrement,
     mig_id integer,
     mig_name varchar(255),
     mig_fname varchar(255),
-    status integer,
+    status varchar(255),
     created TIMESTAMP NOT NULL DEFAULT current_timestamp
 );
 """
@@ -101,6 +103,12 @@ SELECT mig_id, mig_name, mig_fname, status, created
 FROM _happy_status
 """
 
+GET_HAPPY_STATUS_BY_FNAME = """
+SELECT mig_id, mig_name, mig_fname, status, created
+FROM _happy_status
+WHERE mig_fname = :mig_fname
+"""
+
 LIST_HAPPY_LOG = """
 SELECT mig_id, operation, username, hostname, created
 FROM _happy_log
@@ -124,17 +132,6 @@ class MigrationError(Exception):
 def _mig_name_parser(string: str) -> str:
     """Converts a given string to a normalized migration name format."""
     return re.sub(r'[^a-zA-Z0-9_]', '_', string).lower()
-
-
-def _parse_mig(mig_path: Path) -> Migration:
-    """Parses a migration file and returns a `Migration` object."""
-    spec = importlib.util.spec_from_file_location(mig_path.name, mig_path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    queries = getattr(module, "__queries__")
-    if not isinstance(queries, tuple):
-        raise ValueError(f"__queries__ is not a tuple inside migration: {mig_path.name}")
-    return Migration(queries=queries)
 
 
 def parse_settings_ini() -> HappyIni:
@@ -178,6 +175,23 @@ class SQLiteBackend:
     def _commit(self):
         """Commit the current transaction to the database."""
         self._connection.commit()
+
+    def _get_mig_status(self, mig_fname: str) -> list | None:
+        """Return mig status row if mig exist."""
+        params = {"mig_fname": mig_fname}
+        return self._fetchone(GET_HAPPY_STATUS_BY_FNAME, params)
+
+    def _parse_mig(self, mig_path: Path) -> Migration:
+        """Parses a migration file and returns a `Migration` object."""
+        spec = importlib.util.spec_from_file_location(
+            mig_path.name, mig_path
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        queries = getattr(module, "__queries__")
+        if not isinstance(queries, tuple):
+            raise ValueError(MIG_IS_NOT_TUPLE + mig_path.name)
+        return Migration(*self._get_mig_status(mig_path.stem), queries=queries)
 
     def happy_init(self) -> None:
         """Initializes the Happy migration system by verifying the database exists
@@ -254,7 +268,7 @@ class SQLiteBackend:
 
     def _apply_mig_from_name(self, mig_fname: str) -> None:
         mig_path = self._get_mig_path(mig_fname)
-        mig = _parse_mig(mig_path)
+        mig = self._parse_mig(mig_path)
         self._exec_all_forward_steps(mig)
         # TODO: Unify
         self._change_happy_status(mig_fname.split("_", maxsplit=1)[1], "A")
@@ -262,7 +276,7 @@ class SQLiteBackend:
 
     def _rollback_mig_from_name(self, mig_fname: str) -> None:
         mig_path = self._get_mig_path(mig_fname)
-        mig = _parse_mig(mig_path)
+        mig = self._parse_mig(mig_path)
         self._exec_all_backward_steps(mig)
         self._change_happy_status(mig_fname.split('_', maxsplit=1)[1], "P")
         self._commit()
@@ -319,7 +333,7 @@ class SQLiteBackend:
         if name is None:
             return False
         mig_path = self._get_mig_path(name[0])
-        mig = _parse_mig(mig_path)
+        mig = self._parse_mig(mig_path)
         self._exec_all_backward_steps(mig)
         self._change_happy_status(name[0].split("_", maxsplit=1)[1], "P")
         self._commit()

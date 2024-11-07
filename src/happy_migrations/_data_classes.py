@@ -15,23 +15,28 @@ class Query:
 
 @dataclass
 class Migration:
+    mig_id: int
+    mig_name: str
+    mig_fname: str
+    status: str
+    created: datetime
     queries: tuple[Query, ...]
 
 
 @dataclass
 class MigrationStatus:
-    id_migrations_status: int
-    migration_id: int
-    migration_name: str
-    full_name: str
-    applied: bool
+    id_mig_status: int
+    mig_id: int
+    mig_name: str
+    mig_fname: str
+    status: bool
     created: datetime
 
 
 @dataclass
 class HappyLog:
     id_happy_log: int
-    migration_id: int
+    mig_id: int
     operation: str
     username: str
     hostname: str

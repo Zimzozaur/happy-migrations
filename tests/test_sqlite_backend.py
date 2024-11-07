@@ -5,7 +5,7 @@ import pytest
 from happy_migrations.sqlite_backend import (
     SQLiteBackend,
     _mig_name_parser,
-    _parse_mig, MIGRATION_FILE_TEMPLATE
+    MIGRATION_FILE_TEMPLATE
 )
 
 ZERO_MIG_FNAME = "0000_jedi_sith_rogue_tables"
@@ -25,6 +25,7 @@ GET_ZERO_MIG_TABLE_NAMES = """
     WHERE type = 'table'
     AND name IN ('jedi', 'sith', 'rogue');
 """
+
 
 @pytest.fixture
 def db() -> SQLiteBackend:
@@ -51,7 +52,7 @@ def test_mig_parser(tmp_path):
     db = SQLiteBackend(db_path=":memory:", mig_dir=tmp_path)
     db.happy_init()
     db.create_mig("mar_io")
-    res = _parse_mig(tmp_path / "0000_mar_io.py")
+    res = db._parse_mig(tmp_path / "0000_mar_io.py")
     query_body = "\n\n    "
     query = res.queries[0]
     assert query.forward == query_body
@@ -82,6 +83,18 @@ def test_are_separated():
         WHERE type='table' AND name='_happy_log' OR name='_happy_status';
     """)
     assert res == []
+
+
+def test_get_mig_status_exist(db):
+    db._add_mig_to_happy_status(mig_id=0, mig_name="mario")
+    res = db._get_mig_status("0000_mario")[:-1]
+    assert res == (0, 'mario', '0000_mario', 'Pending 🟡')
+
+
+def test_get_mig_status_not_exist(db):
+    db._add_mig_to_happy_status(mig_id=0, mig_name="mario")
+    res = db._get_mig_status("0000_luigi")
+    assert res is None
 
 
 def test_create_mig(db_temp):
@@ -123,7 +136,9 @@ def test_get_pending_migs_names(db):
 
 
 def test_exec_all_forward_steps(db):
-    mig = _parse_mig(db._mig_dir / (ZERO_MIG_FNAME + ".py"))
+    mig_path = db._mig_dir / (ZERO_MIG_FNAME + ".py")
+    db._add_mig_to_happy_status(0, "jedi_sith_rogue_tables")
+    mig = db._parse_mig(mig_path)
     db._exec_all_forward_steps(mig)
     query = """
         SELECT name
@@ -159,6 +174,7 @@ def test__get_mig_path(db_temp):
 
 
 def test_apply_mig_from_name(db):
+    db._add_mig_to_happy_status(0, "jedi_sith_rogue_tables")
     db._apply_mig_from_name(ZERO_MIG_FNAME)
     query = """
         SELECT name
@@ -255,7 +271,9 @@ def test_rollback_mig_false(db):
 
 
 def test_exec_all_backward_steps(db):
-    mig = _parse_mig(db._mig_dir / (ZERO_MIG_FNAME + ".py"))
+    mig_path = db._mig_dir / (ZERO_MIG_FNAME + ".py")
+    db._add_mig_to_happy_status(0, "jedi_sith_rogue_tables")
+    mig = db._parse_mig(mig_path)
     db._exec_all_forward_steps(mig)
     db._exec_all_backward_steps(mig)
     res = db._fetchall(GET_ZERO_MIG_TABLE_NAMES)
