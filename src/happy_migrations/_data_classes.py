@@ -15,8 +15,6 @@ class Query:
 
 @dataclass
 class Migration:
-    key: int
-    name: str
     queries: tuple[Query, ...]
 
 
