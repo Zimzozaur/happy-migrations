@@ -14,9 +14,9 @@ MIGRATION_FILE_TEMPLATE = """\
 Document your migration
 \"\"\"
 
-from happy_migrations import Query
+from happy_migrations import Step
 
-first_step = Query(
+first_step = Step(
     forward=\"\"\"
 
     \"\"\",
@@ -25,10 +25,10 @@ first_step = Query(
     \"\"\"
 )
 
-__queries__: tuple = first_step,
+__steps__: tuple = first_step,
 """
 
-MIG_IS_NOT_TUPLE = "__queries__ is not a tuple inside migration: "
+MIG_IS_NOT_TUPLE = "__steps__ is not a tuple inside migration: "
 
 
 CREATE_HAPPY_STATUS_TABLE = """
@@ -188,10 +188,10 @@ class SQLiteBackend:
         )
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        queries = getattr(module, "__queries__")
+        queries = getattr(module, "__steps__")
         if not isinstance(queries, tuple):
             raise ValueError(MIG_IS_NOT_TUPLE + mig_path.name)
-        return Migration(*self._get_mig_status(mig_path.stem), queries=queries)
+        return Migration(*self._get_mig_status(mig_path.stem), steps=queries)
 
     def happy_init(self) -> None:
         """Initializes the Happy migration system by verifying the database exists
@@ -252,7 +252,7 @@ class SQLiteBackend:
 
     def _exec_all_forward_steps(self, mig: Migration) -> None:
         """Execute every forward Query from a Migration."""
-        for query in mig.queries:
+        for query in mig.steps:
             self._execute(query.forward)
 
     def _get_mig_path(self, mig_fname: str) -> Path:
@@ -343,7 +343,7 @@ class SQLiteBackend:
         """Rolls back a migration by executing each backward SQL statement
         from the last Query to the first.
         """
-        for query in mig.queries[::-1]:
+        for query in mig.steps[::-1]:
             self._execute(query.backward)
 
     def list_happy_logs(self) -> list:

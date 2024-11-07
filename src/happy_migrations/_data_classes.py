@@ -8,7 +8,7 @@ class HappyIni:
 
 
 @dataclass
-class Query:
+class Step:
     forward: str
     backward: str
 
@@ -20,7 +20,7 @@ class Migration:
     mig_fname: str
     status: str
     created: datetime
-    queries: tuple[Query, ...]
+    steps: tuple[Step, ...]
 
 
 @dataclass

@@ -2,9 +2,9 @@
 Document your migration
 """
 
-from happy_migrations import Query
+from happy_migrations import Step
 
-separatist_table = Query(
+separatist_table = Step(
     forward="""
     CREATE TABLE separatist (
         id INTEGER PRIMARY KEY,
@@ -16,4 +16,4 @@ separatist_table = Query(
     """
 )
 
-__queries__: tuple = separatist_table,
+__steps__: tuple = separatist_table,

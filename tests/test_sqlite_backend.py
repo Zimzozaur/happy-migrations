@@ -54,7 +54,7 @@ def test_mig_parser(tmp_path):
     db.create_mig("mar_io")
     res = db._parse_mig(tmp_path / "0000_mar_io.py")
     query_body = "\n\n    "
-    query = res.queries[0]
+    query = res.steps[0]
     assert query.forward == query_body
     assert query.backward == query_body
 

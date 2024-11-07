@@ -2,9 +2,9 @@
 Document your migration
 """
 
-from happy_migrations import Query
+from happy_migrations import Step
 
-jedi_table = Query(
+jedi_table = Step(
     forward="""
     CREATE TABLE jedi (
         id INTEGER PRIMARY KEY,
@@ -16,7 +16,7 @@ jedi_table = Query(
     """
 )
 
-sith_table = Query(
+sith_table = Step(
     forward="""
     CREATE TABLE sith (
         id INTEGER PRIMARY KEY,
@@ -28,7 +28,7 @@ sith_table = Query(
     """
 )
 
-rogue_table = Query(
+rogue_table = Step(
     forward="""
     CREATE TABLE rogue (
         id INTEGER PRIMARY KEY,
@@ -40,4 +40,4 @@ rogue_table = Query(
     """
 )
 
-__queries__: tuple = jedi_table, sith_table, rogue_table
+__steps__: tuple = jedi_table, sith_table, rogue_table
