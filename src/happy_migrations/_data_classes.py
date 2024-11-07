@@ -15,22 +15,10 @@ class Step:
 
 @dataclass
 class Migration:
-    mig_id: int
-    mig_name: str
-    mig_fname: str
+    fname: str
     status: str
     created: datetime
     steps: tuple[Step, ...]
-
-
-@dataclass
-class MigrationStatus:
-    id_mig_status: int
-    mig_id: int
-    mig_name: str
-    mig_fname: str
-    status: bool
-    created: datetime
 
 
 @dataclass

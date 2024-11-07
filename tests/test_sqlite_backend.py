@@ -8,8 +8,8 @@ from happy_migrations.sqlite_backend import (
     MIGRATION_FILE_TEMPLATE
 )
 
-ZERO_MIG_FNAME = "0000_jedi_sith_rogue_tables"
-ONE_MIG_FNAME = "0001_separatist_table"
+ZERO_FNAME = "0000_jedi_sith_rogue_tables"
+ONE_FNAME = "0001_separatist_table"
 
 ZERO_MIG_NAME = "jedi_sith_rogue_tables"
 ONE_MIG_NAME = "separatist_table"
@@ -30,7 +30,6 @@ GET_ZERO_MIG_TABLE_NAMES = """
 @pytest.fixture
 def db() -> SQLiteBackend:
     mig_dir = Path(__file__).parent.resolve() / "migrations"
-    print(mig_dir)
     db_path = ":memory:"
     db = SQLiteBackend(db_path=db_path, mig_dir=mig_dir)
     db.happy_init()
@@ -88,7 +87,7 @@ def test_are_separated():
 def test_get_mig_status_exist(db):
     db._add_mig_to_happy_status(mig_id=0, mig_name="mario")
     res = db._get_mig_status("0000_mario")[:-1]
-    assert res == (0, 'mario', '0000_mario', 'Pending 🟡')
+    assert res == ('0000_mario', 'Pending 🟡')
 
 
 def test_get_mig_status_not_exist(db):
@@ -120,23 +119,23 @@ def test_create_mig_file(db_temp):
 def test_add_mig_happy_status(db):
     db._add_mig_to_happy_status(mig_id=0, mig_name="mario")
     query = """
-        SELECT mig_fname, status
+        SELECT fname, status
         FROM _happy_status
-        WHERE mig_id = 0
+        WHERE fname = '0000_mario'
     """
     res = db._fetchone(query)
     assert res == ('0000_mario', 'Pending 🟡')
 
 
-def test_get_pending_migs_names(db):
-    db._add_mig_to_happy_status(mig_id=0, mig_name="mario")
-    db._add_mig_to_happy_status(mig_id=1, mig_name="luigi")
-    res = tuple(db._get_pending_migs_names())
-    assert res == ('0000_mario', '0001_luigi')
+def test_get_pending_migs_names(db_temp):
+    db_temp.create_mig("mario")
+    db_temp.create_mig("luigi")
+    res = [mig.fname for mig in db_temp._get_pending_migs()]
+    assert res == ['0000_mario', '0001_luigi']
 
 
 def test_exec_all_forward_steps(db):
-    mig_path = db._mig_dir / (ZERO_MIG_FNAME + ".py")
+    mig_path = db._mig_dir / (ZERO_FNAME + ".py")
     db._add_mig_to_happy_status(0, "jedi_sith_rogue_tables")
     mig = db._parse_mig(mig_path)
     db._exec_all_forward_steps(mig)
@@ -152,17 +151,17 @@ def test_exec_all_forward_steps(db):
 
 def test_change_happy_status(db):
     db._add_mig_to_happy_status(mig_id=0, mig_name="mario")
-    name = "mario"
-    db._change_happy_status(name, "A")
+    fname = "0000_mario"
+    db._change_happy_status(fname, "A")
     query = """
         SELECT status
         FROM _happy_status
-        WHERE mig_name = :mig_name
+        WHERE fname = :fname
     """
-    res = db._fetchall(query, {"mig_name": name})
+    res = db._fetchall(query, {"fname": fname})
     assert res == [("Applied 🟢",)]
-    db._change_happy_status(name, "P")
-    res = db._fetchall(query, {"mig_name": name})
+    db._change_happy_status(fname, "P")
+    res = db._fetchall(query, {"fname": fname})
     assert res == [("Pending 🟡",)]
 
 
@@ -175,7 +174,8 @@ def test__get_mig_path(db_temp):
 
 def test_apply_mig_from_name(db):
     db._add_mig_to_happy_status(0, "jedi_sith_rogue_tables")
-    db._apply_mig_from_name(ZERO_MIG_FNAME)
+    mig = db._parse_mig(db._get_mig_path("0000_jedi_sith_rogue_tables"))
+    db._apply_mig(mig)
     query = """
         SELECT name
         FROM sqlite_master
@@ -205,17 +205,18 @@ def test_apply_all_migs(db):
 def test_get_all_migs_up_to_pending(db):
     db._add_mig_to_happy_status(0, ZERO_MIG_NAME)
     db._add_mig_to_happy_status(1, ONE_MIG_NAME)
-    res = tuple(db._get_all_migs_names_up_to(max_id=0, status="P", order="ASC"))
-    assert res == ('0000_jedi_sith_rogue_tables',)
+    res = db._get_all_migs_names_up_to(mig_id=0, status="P", order="ASC")
+    assert res[0].fname == '0000_jedi_sith_rogue_tables'
 
 
 def test_get_all_migs_up_to_applied(db):
     for id, mig_name in enumerate((ZERO_MIG_NAME, ONE_MIG_NAME)):
         db._add_mig_to_happy_status(id, mig_name)
-        db._change_happy_status(mig_name, "A")
+        db._change_happy_status(f"{id:04}_{mig_name}", "A")
 
-    res = tuple(db._get_all_migs_names_up_to(max_id=0, status="A", order="DESC"))
-    assert res == ('0001_separatist_table', '0000_jedi_sith_rogue_tables')
+    migs = db._get_all_migs_names_up_to(mig_id=0, status="A", order="DESC")
+    res = [mig.fname for mig in migs]
+    assert res == ['0001_separatist_table', '0000_jedi_sith_rogue_tables']
 
 
 @pytest.mark.parametrize(
@@ -271,7 +272,7 @@ def test_rollback_mig_false(db):
 
 
 def test_exec_all_backward_steps(db):
-    mig_path = db._mig_dir / (ZERO_MIG_FNAME + ".py")
+    mig_path = db._mig_dir / (ZERO_FNAME + ".py")
     db._add_mig_to_happy_status(0, "jedi_sith_rogue_tables")
     mig = db._parse_mig(mig_path)
     db._exec_all_forward_steps(mig)

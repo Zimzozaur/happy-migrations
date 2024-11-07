@@ -2,7 +2,7 @@ import importlib.util
 import re
 from pathlib import Path
 from sqlite3 import connect, DatabaseError, Connection, Cursor
-from typing import Generator, Literal
+from typing import Literal
 import configparser
 
 from happy_migrations import Migration
@@ -33,18 +33,17 @@ MIG_IS_NOT_TUPLE = "__steps__ is not a tuple inside migration: "
 
 CREATE_HAPPY_STATUS_TABLE = """
 CREATE TABLE IF NOT EXISTS _happy_status (
-    id_mig_status integer primary key autoincrement,
+    id_happy_status integer primary key autoincrement,
     mig_id integer,
-    mig_name varchar(255),
-    mig_fname varchar(255),
+    fname varchar(255),
     status varchar(255),
     created TIMESTAMP NOT NULL DEFAULT current_timestamp
 );
 """
 
 ADD_HAPPY_STATUS = """
-INSERT INTO _happy_status (mig_id, mig_name, mig_fname, status)
-VALUES (:mig_id, :mig_name, :mig_fname, :status)
+INSERT INTO _happy_status (mig_id, fname, status)
+VALUES (:mig_id, :fname, :status)
 """
 
 CREATE_HAPPY_LOG_TABLE = """
@@ -64,21 +63,21 @@ VALUES (:mig_id, :operation, :username, :hostname)
 """
 
 GET_CURRENT_REVISION = """
-SELECT mig_id
+SELECT fname
 FROM _happy_status
-ORDER BY mig_id DESC
+ORDER BY fname DESC
 LIMIT 1
 """
 
-GET_PENDING_MIG = """
-SELECT mig_fname
+GET_PENDING_MIGS_NAMES = """
+SELECT fname
 FROM _happy_status
 WHERE status = :status
-ORDER BY mig_id
+ORDER BY fname
 """
 
 GET_MIGS_UP_TO = """
-SELECT mig_fname
+SELECT fname
 FROM _happy_status
 WHERE mig_id {operator} ? AND status = ?
 ORDER BY mig_id {order_direction}
@@ -87,11 +86,11 @@ ORDER BY mig_id {order_direction}
 UPDATE_HAPPY_STATUS = """
 UPDATE _happy_status
 SET status = :status
-WHERE mig_name = :mig_name
+WHERE fname = :fname
 """
 
 GET_LAST_BY_STATUS = """
-SELECT mig_fname
+SELECT fname
 FROM _happy_status
 WHERE status = ?
 ORDER BY mig_id DESC
@@ -99,14 +98,14 @@ LIMIT 1
 """
 
 LIST_HAPPY_STATUS = """
-SELECT mig_id, mig_name, mig_fname, status, created
+SELECT fname, status, created
 FROM _happy_status
 """
 
 GET_HAPPY_STATUS_BY_FNAME = """
-SELECT mig_id, mig_name, mig_fname, status, created
+SELECT fname, status, created
 FROM _happy_status
-WHERE mig_fname = :mig_fname
+WHERE fname = :fname
 """
 
 LIST_HAPPY_LOG = """
@@ -176,9 +175,9 @@ class SQLiteBackend:
         """Commit the current transaction to the database."""
         self._connection.commit()
 
-    def _get_mig_status(self, mig_fname: str) -> list | None:
+    def _get_mig_status(self, fname: str) -> list | None:
         """Return mig status row if mig exist."""
-        params = {"mig_fname": mig_fname}
+        params = {"fname": fname}
         return self._fetchone(GET_HAPPY_STATUS_BY_FNAME, params)
 
     def _parse_mig(self, mig_path: Path) -> Migration:
@@ -201,7 +200,7 @@ class SQLiteBackend:
             raise DatabaseError(f"Database not found at: {self._db_path}")
         self._execute(CREATE_HAPPY_STATUS_TABLE)
         self._execute(CREATE_HAPPY_LOG_TABLE)
-        self._connection.commit()
+        self._commit()
 
     def happy_boot(self) -> None:
         """Initializes Happy and applies all migrations.
@@ -214,10 +213,10 @@ class SQLiteBackend:
         """Retrieves the latest migration revision id from the database
         or return -1 if empty.
         """
-        row = self._fetchone(GET_CURRENT_REVISION)
-        if not row:
+        fname: list[str] | None = self._fetchone(GET_CURRENT_REVISION)
+        if not fname:
             return -1
-        return row[0]
+        return int(fname[0].split("_", maxsplit=1)[0])
 
     def create_mig(self, mig_name: str) -> None:
         """Create new migration."""
@@ -234,64 +233,57 @@ class SQLiteBackend:
 
     def _add_mig_to_happy_status(self, mig_id: int, mig_name: str) -> None:
         """Add new migration to db with status pending."""
-        mig_fname = f"{mig_id:04}_{mig_name}"
         params = {
             "mig_id": mig_id,
-            "mig_name": mig_name,
-            "mig_fname": mig_fname,
+            "fname": f"{mig_id:04}_{mig_name}",
             "status": HAPPY_STATUS['P'],
         }
         self._connection.execute(ADD_HAPPY_STATUS, params)
         self._commit()
 
-    def _get_pending_migs_names(self) -> Generator[str, None, None]:
+    def _get_pending_migs(self) -> list[Migration]:
         """Return all pending migrations' names."""
         params = {"status": HAPPY_STATUS["P"]}
-        names = self._fetchall(GET_PENDING_MIG, params)
-        return (name[0] for name in names)
+        rows = self._fetchall(GET_PENDING_MIGS_NAMES, params)
+        return [self._parse_mig(self._get_mig_path(row[0])) for row in rows]
 
     def _exec_all_forward_steps(self, mig: Migration) -> None:
         """Execute every forward Query from a Migration."""
         for query in mig.steps:
             self._execute(query.forward)
 
-    def _get_mig_path(self, mig_fname: str) -> Path:
+    def _get_mig_path(self, fname: str) -> Path:
         """Return full path to migration."""
-        return self._mig_dir / (mig_fname + ".py")
+        return self._mig_dir / (fname + ".py")
 
-    def _change_happy_status(self, mig_name: str, status: Literal["A", "P"]) -> None:
+    def _change_happy_status(self, fname: str, status: Literal["A", "P"]) -> None:
         """Updates the `applied` status of a specific migration
         in the `_happy_status` database table.
         """
-        params = {"status": HAPPY_STATUS[status], "mig_name": mig_name}
+        params = {"status": HAPPY_STATUS[status], "fname": fname}
         self._execute(UPDATE_HAPPY_STATUS, params)
 
-    def _apply_mig_from_name(self, mig_fname: str) -> None:
-        mig_path = self._get_mig_path(mig_fname)
-        mig = self._parse_mig(mig_path)
+    def _apply_mig(self, mig: Migration) -> None:
         self._exec_all_forward_steps(mig)
-        # TODO: Unify
-        self._change_happy_status(mig_fname.split("_", maxsplit=1)[1], "A")
+        self._change_happy_status(mig.fname, "A")
         self._commit()
 
-    def _rollback_mig_from_name(self, mig_fname: str) -> None:
-        mig_path = self._get_mig_path(mig_fname)
-        mig = self._parse_mig(mig_path)
+    def _rollback_mig(self, mig: Migration) -> None:
         self._exec_all_backward_steps(mig)
-        self._change_happy_status(mig_fname.split('_', maxsplit=1)[1], "P")
+        self._change_happy_status(mig.fname, "P")
         self._commit()
 
     def _apply_all_migs(self) -> None:
-        mig_names = self._get_pending_migs_names()
-        for mig_name in mig_names:
-            self._apply_mig_from_name(mig_name)
+        migs = self._get_pending_migs()
+        for mig in migs:
+            self._apply_mig(mig)
 
     def _get_all_migs_names_up_to(
         self,
-        max_id: int,
+        mig_id: int,
         status: Literal["A", "P"],
         order: Literal["ASC", "DESC"]
-    ) -> list[str]:
+    ) -> list[Migration]:
         """Retrieves all pending migration names from
         the `_happy_status` table up to a specified migration ID.
         """
@@ -304,23 +296,23 @@ class SQLiteBackend:
             operator=operator,
             order_direction=order
         )
-        names = self._fetchall(
+        rows = self._fetchall(
             query,
-            (max_id, HAPPY_STATUS[status])
+            (mig_id, HAPPY_STATUS[status])
         )
-        return [name[0] for name in names]
+        return [self._parse_mig(self._get_mig_path(row[0])) for row in rows]
 
-    def _apply_migs_up_to(self, max_id: int) -> None:
+    def _apply_migs_up_to(self, mig_id: int) -> None:
         """Applies all pending migrations up to the specified migration ID."""
-        names = self._get_all_migs_names_up_to(max_id, "P", "ASC")
-        for name in names:
-            self._apply_mig_from_name(name)
+        migs = self._get_all_migs_names_up_to(mig_id, "P", "ASC")
+        for mig in migs:
+            self._apply_mig(mig)
 
-    def _rollback_migs_up_to(self, max_id: int) -> None:
+    def _rollback_migs_up_to(self, mig_id: int) -> None:
         """Roll back all applied migrations up to the specified migration ID."""
-        fnames = self._get_all_migs_names_up_to(max_id, "A", "DESC")
-        for fname in fnames:
-            self._rollback_mig_from_name(fname)
+        migs = self._get_all_migs_names_up_to(mig_id, "A", "DESC")
+        for mig in migs:
+            self._rollback_mig(mig)
 
     def _rollback_last_mig(self) -> bool:
         """Roll back the last applied migration and return True.
@@ -335,7 +327,7 @@ class SQLiteBackend:
         mig_path = self._get_mig_path(name[0])
         mig = self._parse_mig(mig_path)
         self._exec_all_backward_steps(mig)
-        self._change_happy_status(name[0].split("_", maxsplit=1)[1], "P")
+        self._change_happy_status(mig.fname, "P")
         self._commit()
         return True
 
