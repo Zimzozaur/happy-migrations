@@ -107,9 +107,9 @@ def test_create_mig_file(db_temp):
 def test_add_mig_happy_status(db):
     db._add_mig_to_happy_status(mig_id=0, mig_name="mario")
     query = """
-        SELECT full_name, status
+        SELECT mig_fname, status
         FROM _happy_status
-        WHERE migration_id = 0
+        WHERE mig_id = 0
     """
     res = db._fetchone(query)
     assert res == ('0000_mario', 'Pending 🟡')
@@ -142,12 +142,12 @@ def test_change_happy_status(db):
     query = """
         SELECT status
         FROM _happy_status
-        WHERE migration_name = :migration_name
+        WHERE mig_name = :mig_name
     """
-    res = db._fetchall(query, {"migration_name": name})
+    res = db._fetchall(query, {"mig_name": name})
     assert res == [("Applied 🟢",)]
     db._change_happy_status(name, "P")
-    res = db._fetchall(query, {"migration_name": name})
+    res = db._fetchall(query, {"mig_name": name})
     assert res == [("Pending 🟡",)]
 
 

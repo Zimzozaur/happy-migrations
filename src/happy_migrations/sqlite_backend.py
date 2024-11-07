@@ -9,30 +9,6 @@ from happy_migrations import Migration
 from happy_migrations._data_classes import HappyIni
 
 
-MIGRATION_FILE_FORMAT = re.compile(r'^(\d{4})_([a-zA-Z0-9_]+)\.py$')
-
-TEST_MIGRATION_FILE_TEMPLATE = """\
-\"\"\"
-Document your migration
-\"\"\"
-
-from happy_migrations import Query
-
-first_step = Query(
-    forward=\"\"\"
-    CREATE TABLE jedi (
-        id INTEGER PRIMARY KEY,
-        name TEXT NOT NULL
-    );
-    \"\"\",
-    backward=\"\"\"
-    DROP TABLE jedi;
-    \"\"\"
-)
-
-__queries__: tuple = first_step,
-"""
-
 MIGRATION_FILE_TEMPLATE = """\
 \"\"\"
 Document your migration
@@ -56,23 +32,23 @@ __queries__: tuple = first_step,
 CREATE_HAPPY_STATUS_TABLE = """
 CREATE TABLE IF NOT EXISTS _happy_status (
     id_migrations_status integer primary key autoincrement,
-    migration_id integer,
-    migration_name varchar(255),
-    full_name varchar(255),
+    mig_id integer,
+    mig_name varchar(255),
+    mig_fname varchar(255),
     status integer,
     created TIMESTAMP NOT NULL DEFAULT current_timestamp
 );
 """
 
 ADD_HAPPY_STATUS = """
-INSERT INTO _happy_status (migration_id, migration_name, full_name, status)
-VALUES (:migration_id, :migration_name, :full_name, :status)
+INSERT INTO _happy_status (mig_id, mig_name, mig_fname, status)
+VALUES (:mig_id, :mig_name, :mig_fname, :status)
 """
 
 CREATE_HAPPY_LOG_TABLE = """
 CREATE TABLE IF NOT EXISTS _happy_log (
     id_happy_log integer primary key autoincrement,
-    migration_id integer,
+    mig_id integer,
     operation varchar(255),
     username varchar(255),
     hostname varchar(255),
@@ -81,52 +57,52 @@ CREATE TABLE IF NOT EXISTS _happy_log (
 """
 
 ADD_HAPPY_LOG = """
-INSERT INTO _happy_log (migration_id, operation, username, hostname)
-VALUES (:migration_id, :operation, :username, :hostname)
+INSERT INTO _happy_log (mig_id, operation, username, hostname)
+VALUES (:mig_id, :operation, :username, :hostname)
 """
 
 GET_CURRENT_REVISION = """
-SELECT migration_id
+SELECT mig_id
 FROM _happy_status
-ORDER BY migration_id DESC
+ORDER BY mig_id DESC
 LIMIT 1
 """
 
 GET_PENDING_MIG = """
-SELECT full_name
+SELECT mig_fname
 FROM _happy_status
 WHERE status = :status
-ORDER BY migration_id
+ORDER BY mig_id
 """
 
 GET_MIGS_UP_TO = """
-SELECT full_name
+SELECT mig_fname
 FROM _happy_status
-WHERE migration_id {operator} ? AND status = ?
-ORDER BY migration_id {order_direction}
+WHERE mig_id {operator} ? AND status = ?
+ORDER BY mig_id {order_direction}
 """
 
 UPDATE_HAPPY_STATUS = """
 UPDATE _happy_status
 SET status = :status
-WHERE migration_name = :migration_name
+WHERE mig_name = :mig_name
 """
 
 GET_LAST_BY_STATUS = """
-SELECT full_name
+SELECT mig_fname
 FROM _happy_status
 WHERE status = ?
-ORDER BY migration_id DESC
+ORDER BY mig_id DESC
 LIMIT 1
 """
 
 LIST_HAPPY_STATUS = """
-SELECT migration_id, migration_name, full_name, status, created
+SELECT mig_id, mig_name, mig_fname, status, created
 FROM _happy_status
 """
 
 LIST_HAPPY_LOG = """
-SELECT migration_id, operation, username, hostname, created
+SELECT mig_id, operation, username, hostname, created
 FROM _happy_log
 """
 
@@ -229,9 +205,9 @@ class SQLiteBackend:
             return -1
         return row[0]
 
-    def create_mig(self, migration_name: str) -> None:
+    def create_mig(self, mig_name: str) -> None:
         """Create new migration."""
-        mig_name = _mig_name_parser(migration_name)
+        mig_name = _mig_name_parser(mig_name)
         mig_id: int = self._get_current_revision_id() + 1
         self._create_mig_file(mig_name=mig_name, mig_id=mig_id)
         self._add_mig_to_happy_status(mig_id=mig_id, mig_name=mig_name)
@@ -244,11 +220,11 @@ class SQLiteBackend:
 
     def _add_mig_to_happy_status(self, mig_id: int, mig_name: str) -> None:
         """Add new migration to db with status pending."""
-        full_name = f"{mig_id:04}_{mig_name}"
+        mig_fname = f"{mig_id:04}_{mig_name}"
         params = {
-            "migration_id": mig_id,
-            "migration_name": mig_name,
-            "full_name": full_name,
+            "mig_id": mig_id,
+            "mig_name": mig_name,
+            "mig_fname": mig_fname,
             "status": HAPPY_STATUS['P'],
         }
         self._connection.execute(ADD_HAPPY_STATUS, params)
@@ -273,7 +249,7 @@ class SQLiteBackend:
         """Updates the `applied` status of a specific migration
         in the `_happy_status` database table.
         """
-        params = {"status": HAPPY_STATUS[status], "migration_name": mig_name}
+        params = {"status": HAPPY_STATUS[status], "mig_name": mig_name}
         self._execute(UPDATE_HAPPY_STATUS, params)
 
     def _apply_mig_from_name(self, mig_fname: str) -> None:
