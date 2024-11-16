@@ -53,7 +53,6 @@ def log() -> None:
 
 
 @click.command()
-@click.pass_context
 def status() -> None:
     """Display _happy_status table."""
     db = SQLiteBackend(parse_happy_ini())
@@ -62,7 +61,6 @@ def status() -> None:
         rows=db.list_happy_status()
     ).run(inline=True, inline_no_clear=True)
     db.close_connection()
-    echo(style("LOL LOL LOL", "yellow"))
 
 
 @click.command()
@@ -84,6 +82,7 @@ def fixture():
     db = SQLiteBackend(parse_happy_ini())
     for _ in range(10**3):
         db.create_mig(quotes[randint(0, 9)])
+    db.close_connection()
 
 
 happy.add_command(init)
