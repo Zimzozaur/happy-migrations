@@ -181,6 +181,15 @@ class SQLiteBackend:
         """Commit the current transaction to the database."""
         self._connection.commit()
 
+    def _close_connection(self):
+        """Close connection to DB."""
+        self._connection.close()
+
+    def _reconnect(self):
+        """Reconnect connection to DB."""
+        self._connection.close()
+        self._connection = connect(self._db_path)
+
     def _get_mig_status(self, fname: str) -> list | None:
         """Return mig status row if mig exist."""
         params = {"fname": fname}
@@ -212,8 +221,10 @@ class SQLiteBackend:
         """Initializes Happy and applies all migrations.
         Required during app startup to integrate Happy into the app.
         """
+        # TODO: Write test
         self.happy_init()
         self._apply_all_migs()
+        self._close_connection()
 
     def _get_current_revision_id(self) -> int:
         """Retrieves the latest migration revision id from the database
