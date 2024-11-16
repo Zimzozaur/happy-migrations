@@ -1,10 +1,18 @@
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 
 
 @dataclass
 class HappyIni:
-    db_path: str
+    db_path: Path | str
+    migs_dir: Path
+
+    def __post_init__(self):
+        if isinstance(self.db_path, str) and self.db_path != ":memory:":
+            self.db_path = Path(self.db_path)
+        if isinstance(self.migs_dir, str):
+            self.migs_dir = Path(self.migs_dir)
 
 
 @dataclass
