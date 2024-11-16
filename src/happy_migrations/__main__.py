@@ -1,6 +1,11 @@
 import click
+from click import echo, style
 
-from happy_migrations import SQLiteBackend, parse_happy_ini
+from happy_migrations import (
+    SQLiteBackend,
+    parse_happy_ini,
+    create_happy_ini
+)
 
 
 class SQLiteBackendContext(click.Context):
@@ -18,7 +23,7 @@ def happy(ctx) -> None:
 @click.command()
 @click.pass_context
 def init(ctx: SQLiteBackendContext) -> None:
-    """Initialize the SQLite backend."""
+    """Initializes the Happy migration system """
     ctx.obj.happy_init()
     ctx.obj.close_connection()
 
@@ -32,5 +37,14 @@ def cmig(ctx: SQLiteBackendContext, migration_name: str) -> None:
     ctx.obj.close_connection()
 
 
+@click.command()
+def config():
+    """Create happy.ini file in CWD."""
+    message = "Happy.ini already exist."
+    if create_happy_ini():
+        echo(style("Warning: ", "yellow") + message)
+
+
 happy.add_command(init)
 happy.add_command(cmig)
+happy.add_command(config)
