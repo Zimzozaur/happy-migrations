@@ -1,9 +1,8 @@
 import importlib.util
 import re
 from pathlib import Path
-from sqlite3 import connect, DatabaseError, Connection, Cursor
+from sqlite3 import connect, Connection, Cursor
 from typing import Literal
-import configparser
 
 from happy_migrations import Migration
 from happy_migrations._data_classes import HappyIni
@@ -139,15 +138,6 @@ def _mig_name_parser(string: str) -> str:
     return re.sub(r'[^a-zA-Z0-9_]', '_', string).lower()
 
 
-def parse_settings_ini() -> HappyIni:
-    """Parse the 'happy.ini' configuration file
-    and return a HappyIni dataclass instance.
-    """
-    config = configparser.ConfigParser()
-    config.read('happy.ini')
-    return HappyIni(db_path=config['Settings']['db_path'])
-
-
 class SQLiteBackend:
     _instance = None
 
@@ -160,10 +150,11 @@ class SQLiteBackend:
             cls._instance = super().__new__(cls)
         return cls._instance
 
-    def __init__(self, db_path: Path | str, mig_dir: Path | str) -> None:
-        self._mig_dir = mig_dir
-        self._db_path = db_path
-        self._connection: Connection = connect(db_path)
+    def __init__(self, happy: HappyIni) -> None:
+        self._config = happy
+        self._migs_dir = happy.migs_dir
+        self._db_path = happy.db_path
+        self._connection: Connection = connect(self._db_path)
 
     def _execute(self, query: str, params: dict | tuple = ()) -> Cursor:
         """Execute a SQL query with optional parameters and return a cursor."""
@@ -180,10 +171,6 @@ class SQLiteBackend:
     def _commit(self):
         """Commit the current transaction to the database."""
         self._connection.commit()
-
-    def _close_connection(self):
-        """Close connection to DB."""
-        self._connection.close()
 
     def _reconnect(self):
         """Reconnect connection to DB."""
@@ -208,11 +195,10 @@ class SQLiteBackend:
         return Migration(*self._get_mig_status(mig_path.stem), steps=queries)
 
     def happy_init(self) -> None:
-        """Initializes the Happy migration system by verifying the database exists
-        and creating necessary tables if needed.
+        """Initializes the Happy migration system by verifying the migrations
+        dir exist and create necessary tables if needed.
         """
-        if not self._db_path == ":memory:" and not self._db_path.exists():
-            raise DatabaseError(f"Database not found at: {self._db_path}")
+        self._migs_dir.mkdir(parents=True, exist_ok=True)
         self._execute(CREATE_HAPPY_STATUS_TABLE)
         self._execute(CREATE_HAPPY_LOG_TABLE)
         self._commit()
@@ -223,8 +209,8 @@ class SQLiteBackend:
         """
         # TODO: Write test
         self.happy_init()
-        self._apply_all_migs()
-        self._close_connection()
+        self.apply_all_migs()
+        self.close_connection()
 
     def _get_current_revision_id(self) -> int:
         """Retrieves the latest migration revision id from the database
@@ -245,7 +231,7 @@ class SQLiteBackend:
     def _create_mig_file(self, mig_name: str, mig_id: int) -> None:
         """Create new boilerplate migration file."""
         name = f"{mig_id:04}_{mig_name}.py"
-        with open(self._mig_dir / name, 'w') as file:
+        with open(self._migs_dir / name, 'w') as file:
             file.write(MIGRATION_FILE_TEMPLATE)
 
     def _add_mig_to_happy_status(self, mig_id: int, mig_name: str) -> None:
@@ -271,7 +257,7 @@ class SQLiteBackend:
 
     def _get_mig_path(self, fname: str) -> Path:
         """Return full path to migration."""
-        return self._mig_dir / (fname + ".py")
+        return self._migs_dir / (fname + ".py")
 
     def _change_happy_status(self, fname: str, status: Literal["A", "P"]) -> None:
         """Updates the `applied` status of a specific migration
@@ -290,11 +276,6 @@ class SQLiteBackend:
         self._change_happy_status(mig.fname, "P")
         self._commit()
 
-    def _apply_all_migs(self) -> None:
-        migs = self._get_pending_migs()
-        for mig in migs:
-            self._apply_mig(mig)
-
     def _get_all_migs_names_up_to(
         self,
         mig_id: int,
@@ -311,19 +292,50 @@ class SQLiteBackend:
         )
         return [self._parse_mig(self._get_mig_path(row[0])) for row in rows]
 
-    def _apply_migs_up_to(self, mig_id: int) -> None:
+    def _exec_all_backward_steps(self, mig: Migration) -> None:
+        """Rolls back a migration by executing each backward SQL statement
+        from the last Query to the first.
+        """
+        for query in mig.steps[::-1]:
+            self._execute(query.backward)
+
+    def close_connection(self):
+        """Close connection to DB."""
+        self._connection.close()
+
+    def apply_last(self):
+        """
+        Applies the last migration if available.
+        If no migration is found, prints a message to the console.
+        """
+        pass
+
+    def rollback_last(self):
+        """
+        Rolls back the last applied migration if available.
+        If no migration is found, prints a message to the console.
+        """
+        pass
+
+    def apply_all_migs(self) -> None:
+        """Apply all migrations."""
+        migs = self._get_pending_migs()
+        for mig in migs:
+            self._apply_mig(mig)
+
+    def apply_migs_up_to(self, mig_id: int) -> None:
         """Applies all pending migrations up to the specified migration ID."""
         migs = self._get_all_migs_names_up_to(mig_id, "P", "ASC")
         for mig in migs:
             self._apply_mig(mig)
 
-    def _rollback_migs_up_to(self, mig_id: int) -> None:
+    def rollback_migs_up_to(self, mig_id: int) -> None:
         """Roll back all applied migrations up to the specified migration ID."""
         migs = self._get_all_migs_names_up_to(mig_id, "A", "DESC")
         for mig in migs:
             self._rollback_mig(mig)
 
-    def _rollback_last_mig(self) -> bool:
+    def rollback_last_mig(self) -> bool:
         """Roll back the last applied migration and return True.
         If no migration is available to roll back return False.
         """
@@ -340,13 +352,6 @@ class SQLiteBackend:
         self._commit()
         return True
 
-    def _exec_all_backward_steps(self, mig: Migration) -> None:
-        """Rolls back a migration by executing each backward SQL statement
-        from the last Query to the first.
-        """
-        for query in mig.steps[::-1]:
-            self._execute(query.backward)
-
     def list_happy_logs(self) -> list:
         """Return list of all logs from _happy_log."""
         # TODO: Test when table is ok
@@ -356,10 +361,3 @@ class SQLiteBackend:
         """Return list of all statuses from _happy_status."""
         # TODO: Test when table is ok
         return self._fetchall(LIST_HAPPY_STATUS)
-
-
-if __name__ == "__main__":
-    db = SQLiteBackend(
-        db_path=":memory:",
-        mig_dir=Path().resolve() / "migrations"
-    )
