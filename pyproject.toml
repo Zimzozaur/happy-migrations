@@ -11,11 +11,11 @@ requires-python = ">=3.12"
 
 classifiers = [
     "Development Status :: 1 - Planning",
-    "Environment :: Developers",
+    "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Intended Audience :: End Users/Desktop",
     "Topic :: Database",
-    "Topic ::Database :: Front-Ends",
+    "Topic :: Database :: Front-Ends",
     "Topic :: Software Development",
     "Topic :: Software Development :: Version Control",
     "Operating System :: Microsoft :: Windows :: Windows 10",
@@ -49,7 +49,7 @@ paths = ["src/happy_migrations"]
 paths = ["src/happy_migrations"]
 
 [project.scripts]
-happy = "happy_migrations.__main__:main"
+happy = "happy_migrations.__main__:happy"
 
 [tool.ruff]
 exclude = ["tests"]
