@@ -15,11 +15,11 @@ theme = dark
 
 def create_happy_ini() -> bool:
     """Create happy.ini file in CWD."""
-    path = Path().cwd() / "Ohappy.ini"
+    path = Path().cwd() / "happy.ini"
     if path.exists():
         return True
 
-    with open(Path().cwd() / "Ohappy.ini", "w") as file:
+    with open(path, "w") as file:
         file.write(_HAPPY_INI_TEMPLATE)
 
     return False
