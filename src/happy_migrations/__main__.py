@@ -19,7 +19,7 @@ def happy() -> None:
 
 @click.command()
 def config():
-    """Create happy.ini file in CWD."""
+    """Create happy.ini file inside CWD."""
     message = "Happy.ini already exist."
     path = Path().cwd() / "happy.ini"
 
@@ -31,7 +31,7 @@ def config():
 
 @click.command()
 def init() -> None:
-    """Initializes the Happy migration system."""
+    """Initializes the Happy migrations."""
     db = SQLiteBackend(parse_happy_ini())
     db.happy_init()
     db.close_connection()
@@ -49,6 +49,7 @@ def cmig(migration_name: str) -> None:
 @click.command()
 def log() -> None:
     """Display _happy_log table."""
+    pass
 
 
 @click.command()
