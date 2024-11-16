@@ -79,8 +79,14 @@ ORDER BY fname
 GET_MIGS_UP_TO = """
 SELECT fname
 FROM _happy_status
-WHERE mig_id {operator} ? AND status = ?
-ORDER BY mig_id {order_direction}
+WHERE
+    (mig_id <= CASE WHEN :order = 'ASC' THEN :mig_id END
+    OR
+    mig_id >= CASE WHEN :order = 'DESC' THEN :mig_id END)
+AND status = :status
+ORDER BY
+    CASE WHEN :order = 'ASC' THEN mig_id END,
+    CASE WHEN :order = 'DESC' THEN mig_id END DESC;
 """
 
 UPDATE_HAPPY_STATUS = """
@@ -287,18 +293,10 @@ class SQLiteBackend:
         """Retrieves all pending migration names from
         the `_happy_status` table up to a specified migration ID.
         """
-        if order == "ASC":
-            operator = "<="
-        else:
-            operator = ">="
-
-        query = GET_MIGS_UP_TO.format(
-            operator=operator,
-            order_direction=order
-        )
         rows = self._fetchall(
-            query,
-            (mig_id, HAPPY_STATUS[status])
+            GET_MIGS_UP_TO,
+            {"mig_id": mig_id, "status": HAPPY_STATUS[status], "order": order}
+
         )
         return [self._parse_mig(self._get_mig_path(row[0])) for row in rows]
 
