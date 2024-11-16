@@ -13,9 +13,8 @@ theme = dark
 """
 
 
-def create_happy_ini() -> bool:
+def create_happy_ini(path: Path) -> bool:
     """Create happy.ini file in CWD."""
-    path = Path().cwd() / "happy.ini"
     if path.exists():
         return True
 

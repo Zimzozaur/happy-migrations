@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import click
 from click import echo, style
 
@@ -9,63 +11,61 @@ from happy_migrations import (
 from happy_migrations._textual_app import StatusApp
 
 
-class SQLiteBackendContext(click.Context):
-    obj: SQLiteBackend
-
-
 @click.group()
-@click.pass_context
-def happy(ctx) -> None:
+def happy() -> None:
     """Happy CLI."""
-    happy_ini = parse_happy_ini()
-    ctx.obj = SQLiteBackend(happy_ini)
-
-
-@click.command()
-@click.pass_context
-def init(ctx: SQLiteBackendContext) -> None:
-    """Initializes the Happy migration system."""
-    ctx.obj.happy_init()
-    ctx.obj.close_connection()
-
-
-@click.command()
-@click.argument("migration_name")
-@click.pass_context
-def cmig(ctx: SQLiteBackendContext, migration_name: str) -> None:
-    """Create migration."""
-    ctx.obj.create_mig(mig_name=migration_name)
-    ctx.obj.close_connection()
+    pass
 
 
 @click.command()
 def config():
     """Create happy.ini file in CWD."""
     message = "Happy.ini already exist."
-    if create_happy_ini():
+    path = Path().cwd() / "happy.ini"
+
+    if create_happy_ini(path):
         echo(style("Warning: ", "yellow") + message)
+    else:
+        echo(style("Created: ", "green") + str(path))
 
 
 @click.command()
-@click.pass_context
-def log(ctx: SQLiteBackendContext) -> None:
+def init() -> None:
+    """Initializes the Happy migration system."""
+    db = SQLiteBackend(parse_happy_ini())
+    db.happy_init()
+    db.close_connection()
+
+
+@click.command()
+@click.argument("migration_name")
+def cmig(migration_name: str) -> None:
+    """Create migration."""
+    db = SQLiteBackend(parse_happy_ini())
+    db.create_mig(mig_name=migration_name)
+    db.close_connection()
+
+
+@click.command()
+def log() -> None:
     """Display _happy_log table."""
 
 
 @click.command()
 @click.pass_context
-def status(ctx: SQLiteBackendContext) -> None:
+def status() -> None:
     """Display _happy_status table."""
-    status_data = ctx.obj.list_happy_status()
+    db = SQLiteBackend(parse_happy_ini())
     StatusApp(
         headers=["Name", "Status", "Creation Date"],
-        rows=status_data
+        rows=db.list_happy_status()
     ).run(inline=True, inline_no_clear=True)
+    db.close_connection()
+    echo(style("LOL LOL LOL", "yellow"))
 
 
 @click.command()
-@click.pass_context
-def fixture(ctx: SQLiteBackendContext):
+def fixture():
     """Create 1000 migrations with names based on 孫子 quotes names."""
     from random import randint
     quotes = [
@@ -80,8 +80,9 @@ def fixture(ctx: SQLiteBackendContext):
         "he_will_win_who_knows_when_to_fight",
         "quickness_is_the_essence_of_war"
     ]
+    db = SQLiteBackend(parse_happy_ini())
     for _ in range(10**3):
-        ctx.obj.create_mig(quotes[randint(0, 9)])
+        db.create_mig(quotes[randint(0, 9)])
 
 
 happy.add_command(init)
