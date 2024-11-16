@@ -1,10 +1,9 @@
 [project]
 name = "happy-migrations"
-version = "0.0.1"
+version = "0.0.2"
 authors = [
   { name="Simon Piechutowski", email="szymonpiechutowski@gmail.com" },
 ]
-
 description = "Hopefully no tears."
 readme = "readme.md"
 requires-python = ">=3.12"
@@ -25,10 +24,13 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Typing :: Typed",
 ]
+dependencies = [
+    "click~=8.1.7",
+    "textual~=0.85.2",
+]
 
 [project.optional-dependencies]
 dev = [
-    "click~=8.1.7",
     "ruff>=0.6.1",
     "pytest~=8.3.2",
     "pre-commit~=4.0.1",
