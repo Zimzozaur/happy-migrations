@@ -27,4 +27,9 @@ dist/
 venv/
 .env
 
+# tests
+/htmlcov
+
+.coverage
 mre.py
+test.py
