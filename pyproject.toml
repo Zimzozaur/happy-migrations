@@ -1,6 +1,6 @@
 [project]
 name = "happy-migrations"
-version = "0.0.2"
+version = "0.0.3"
 authors = [
   { name="Simon Piechutowski", email="szymonpiechutowski@gmail.com" },
 ]
@@ -26,7 +26,7 @@ classifiers = [
 ]
 dependencies = [
     "click~=8.1.7",
-    "textual~=0.85.2",
+    "textual",
 ]
 
 [project.optional-dependencies]
@@ -34,6 +34,7 @@ dev = [
     "ruff>=0.6.1",
     "pytest~=8.3.2",
     "pre-commit~=4.0.1",
+    "coverage~=7.6.8"
 ]
 
 [project.urls]
@@ -56,7 +57,7 @@ happy = "happy_migrations.__main__:happy"
 [tool.ruff]
 exclude = ["tests"]
 
-ignore = [
+lint.ignore = [
     "D203",
     "D213",
 ]
