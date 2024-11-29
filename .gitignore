@@ -29,7 +29,13 @@ venv/
 
 # tests
 /htmlcov
+/demo_happy_migrations
+/migrations
+/migs
 
+demo_happy.db
+happy.db
+happy.ini
 .coverage
 mre.py
 test.py
