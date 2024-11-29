@@ -1,160 +1,255 @@
 import importlib.util
-import re
 from pathlib import Path
 from sqlite3 import connect, Connection, Cursor
-from typing import Literal
+from typing import Callable, Generator, Literal
+from itertools import zip_longest
 
-from happy_migrations import Migration
-from happy_migrations._data_classes import HappyIni
-
-
-MIGRATION_FILE_TEMPLATE = """\
-\"\"\"
-Document your migration
-\"\"\"
-
-from happy_migrations import Step
-
-first_step = Step(
-    forward=\"\"\"
-
-    \"\"\",
-    backward=\"\"\"
-
-    \"\"\"
+from happy_migrations import MigrationSQL
+from happy_migrations._data_classes import HappyIni, MigData, HappyMsg
+from happy_migrations._sql import (
+    CREATE_HAPPY_STATUS_TABLE,
+    HAPPY_STATUS_EXIST,
+    GET_LAST_APPLIED_ID,
+    ADD_HAPPY_STATUS,
+    REMOVE_HAPPY_STATUS,
+    LIST_HAPPY_STATUS,
 )
-
-__steps__: tuple = first_step,
-"""
+from happy_migrations._templates import MIGRATION_FILE_TEMPLATE
+from happy_migrations._utils import mig_name_parser
 
 MIG_IS_NOT_TUPLE = "__steps__ is not a tuple inside migration: "
 
-
-CREATE_HAPPY_STATUS_TABLE = """
-CREATE TABLE IF NOT EXISTS _happy_status (
-    id_happy_status integer primary key autoincrement,
-    mig_id integer,
-    fname varchar(255),
-    status varchar(255),
-    created TIMESTAMP NOT NULL DEFAULT current_timestamp
-);
-"""
-
-ADD_HAPPY_STATUS = """
-INSERT INTO _happy_status (mig_id, fname, status)
-VALUES (:mig_id, :fname, :status)
-"""
-
-CREATE_HAPPY_LOG_TABLE = """
-CREATE TABLE IF NOT EXISTS _happy_log (
-    id_happy_log integer primary key autoincrement,
-    mig_id integer,
-    operation varchar(255),
-    username varchar(255),
-    hostname varchar(255),
-    created TIMESTAMP NOT NULL DEFAULT current_timestamp
-);
-"""
-
-ADD_HAPPY_LOG = """
-INSERT INTO _happy_log (mig_id, operation, username, hostname)
-VALUES (:mig_id, :operation, :username, :hostname)
-"""
-
-GET_CURRENT_REVISION = """
-SELECT fname
-FROM _happy_status
-ORDER BY fname DESC
-LIMIT 1
-"""
-
-GET_PENDING_MIGS_NAMES = """
-SELECT fname
-FROM _happy_status
-WHERE status = :status
-ORDER BY fname
-"""
-
-GET_MIGS_UP_TO = """
-SELECT fname
-FROM _happy_status
-WHERE
-    (mig_id <= CASE WHEN :order = 'ASC' THEN :mig_id END
-    OR
-    mig_id >= CASE WHEN :order = 'DESC' THEN :mig_id END)
-AND status = :status
-ORDER BY
-    CASE WHEN :order = 'ASC' THEN mig_id END,
-    CASE WHEN :order = 'DESC' THEN mig_id END DESC;
-"""
-
-UPDATE_HAPPY_STATUS = """
-UPDATE _happy_status
-SET status = :status
-WHERE fname = :fname
-"""
-
-GET_LAST_BY_STATUS = """
-SELECT fname
-FROM _happy_status
-WHERE status = ?
-ORDER BY mig_id DESC
-LIMIT 1
-"""
-
-LIST_HAPPY_STATUS = """
-SELECT fname, status, created
-FROM _happy_status
-"""
-
-GET_HAPPY_STATUS_BY_FNAME = """
-SELECT fname, status, created
-FROM _happy_status
-WHERE fname = :fname
-"""
-
-LIST_HAPPY_LOG = """
-SELECT mig_id, operation, username, hostname, created
-FROM _happy_log
-"""
-
-HAPPY_STATUS = {
-    "A": "Applied 🟢",
-    "P": "Pending 🟡",
+HAPPY_STATUS: dict[int, str] = {
+    1: "Applied 🟢",
+    0: "Pending 🟡",
 }
 
-INI_TEMPLATE = """\
-[HAPPY]
-db_path = path\\to\\db
-"""
+MigDirection = Literal["up", "down"]
 
 
-class MigrationError(Exception):
-    pass
+def _no_mig_to(direction: MigDirection) -> HappyMsg:
+    """Create a warning message when no migrations are available
+    to apply or roll back.
+    """
+    action = "apply" if direction == "up" else "roll back"
+    return HappyMsg(
+        status="warning", header="Warning: ", message=f"No migration to {action}."
+    )
 
 
-def _mig_name_parser(string: str) -> str:
-    """Converts a given string to a normalized migration name format."""
-    return re.sub(r'[^a-zA-Z0-9_]', '_', string).lower()
+def _migration_done(mig_data: MigData, direction: MigDirection) -> HappyMsg:
+    """Create a success message for a completed migration."""
+    action = "Applied" if direction == "up" else "Rolled back"
+    return HappyMsg(
+        status="success", header=f"{action}: ", message=f"{mig_data.full_name}"
+    )
+
+
+def _all_migs_have_been(direction: MigDirection) -> HappyMsg:
+    """Create an informational message when all migrations have been processed."""
+    action = "applied" if direction == "up" else "rolled back"
+    return HappyMsg(
+        status="info", header=f"All migrations have been {action}!", message=""
+    )
+
+
+def _changed_up_to(direction: MigDirection, mig_id: int) -> HappyMsg:
+    """Create an informational message for migrations processed up to a specific ID."""
+    action = "Applied" if direction == "up" else "Rolled back"
+    return HappyMsg(
+        status="info", header=f"{action} all migrations up to {mig_id}.", message=""
+    )
+
+
+def _parse_mig(mig_path: Path) -> MigrationSQL:
+    """Parses a migration file and returns a `Migration` object."""
+    spec = importlib.util.spec_from_file_location(mig_path.name, mig_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    queries = getattr(module, "__steps__")
+    if not isinstance(queries, tuple):
+        raise ValueError(MIG_IS_NOT_TUPLE + mig_path.name)
+    return MigrationSQL(steps=queries)
 
 
 class SQLiteBackend:
-    _instance = None
-
-    def __new__(cls, *args, **kwargs) -> "SQLiteBackend":
-        """Creates a new instance if one does not already exist; otherwise,
-        returns the existing instance.
-        Ensures the class follows the Singleton pattern.
-        """
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-        return cls._instance
+    """
+    Only `_apply_mig()`, `_rollback_mig()`, `happy_init()` commit change.
+    """
 
     def __init__(self, happy: HappyIni) -> None:
         self._config = happy
         self._migs_dir = happy.migs_dir
         self._db_path = happy.db_path
         self._connection: Connection = connect(self._db_path)
+        self.theme = happy.theme
+
+    def happy_boot(self, callback: Callable[[HappyMsg], None]) -> None:
+        """Initializes Happy and applies all migrations.
+        Required during app startup to integrate Happy into the app.
+        """
+        # TODO: Write test
+        self.happy_init()
+        self.up_all(callback)
+        self.close_connection()
+
+    def happy_init(self) -> HappyMsg:
+        """Initializes the Happy migration system by verifying the migrations
+        dir exist and create necessary tables if needed.
+        """
+        if not self._migs_dir.exists() or not self._fetchone(HAPPY_STATUS_EXIST):
+            self._migs_dir.mkdir(parents=True, exist_ok=True)
+            self._execute(CREATE_HAPPY_STATUS_TABLE)
+            self._commit()
+            return HappyMsg(
+                status="success",
+                header="Initialized: ",
+                message="Hopefully no tears 🤗",
+            )
+        return HappyMsg(
+            status="warning",
+            header="Don't worry: ",
+            message="Happy already initialized ☺️",
+        )
+
+    def create_mig(self, mig_name: str) -> HappyMsg:
+        """Create new migration file."""
+        mig_name = mig_name_parser(mig_name)
+        mig_id: int = self._get_latest_mig_id() + 1
+        file_name = f"{mig_id:04}_{mig_name}.py"
+        path = self._migs_dir / file_name
+        mig_data = MigData(path=path)
+        self._create_mig_file(mig_data)
+        return HappyMsg(
+            status="success",
+            header="Created: ",
+            message=file_name,
+        )
+
+    def up(self) -> HappyMsg:
+        """Apply the first available migration."""
+        applied_id = self._fetchone(GET_LAST_APPLIED_ID)
+        to_apply_path = self._get_mig_path_by_id(
+            1 if not applied_id else applied_id[0] + 1
+        )
+        if not applied_id and not to_apply_path:
+            return HappyMsg(
+                status="error",
+                header="Error: ",
+                message=f"{self._migs_dir.resolve()} directory is empty.",
+            )
+        if not to_apply_path:
+            return _no_mig_to("up")
+
+        mig_data = MigData(path=to_apply_path)
+        self._apply_mig(mig_data)
+        return _migration_done(mig_data, "up")
+
+    def up_all(self, callback: Callable[[HappyMsg], None]) -> None:
+        """Apply all migrations until no further migrations are available."""
+        msg = self.up()
+        callback(msg)
+        if msg.status in ["error", "warning"]:
+            return
+
+        while True:
+            msg = self.up()
+            if msg.status == "warning":
+                break
+            callback(msg)
+
+        callback(_all_migs_have_been("up"))
+
+    def up_to(self, mig_id: int, callback: Callable[[HappyMsg], None]) -> None:
+        """Applies all pending migrations up to the specified migration ID."""
+        total_migs = self._migs_qty
+        total_applied = len(self._fetchall(LIST_HAPPY_STATUS))
+
+        if total_applied == total_migs or total_applied == mig_id:
+            callback(_no_mig_to("up"))
+            return
+        if mig_id <= total_migs:
+            for _ in range(mig_id - total_applied):
+                msg = self.up()
+                callback(msg)
+        else:
+            while True:
+                msg = self.up()
+                if msg.status == "warning":
+                    break
+                callback(msg)
+        last_id = mig_id if mig_id <= total_migs else total_migs
+        callback(_changed_up_to("up", last_id))
+
+    def down(self) -> HappyMsg:
+        """Roll back the most recently applied migration.
+
+        Returns:
+            HappyMsg: An object representing the result of the rollback attempt.
+                - "Warning" if no migrations are applied and nothing can be rolled back.
+                - "Success" if the rollback is performed successfully.
+        """
+        applied_id = self._fetchone(GET_LAST_APPLIED_ID)
+        if not applied_id:
+            return _no_mig_to("down")
+        path = self._get_mig_path_by_id(applied_id[0])
+        mig_data = MigData(path=path)
+        self._rollback_mig(mig_data)
+        return _migration_done(mig_data, "down")
+
+    def down_all(self, callback: Callable[[HappyMsg], None] | None = None) -> None:
+        """Rollback all applied migrations up to the specified migration ID."""
+        while True:
+            msg = self.down()
+            if msg.status == "warning":
+                break
+            callback(msg)
+        callback(_all_migs_have_been("down"))
+
+    def down_to(self, mig_id: int, callback: Callable[[HappyMsg], None]) -> None:
+        """Roll back all applied migrations up to the specified migration ID."""
+        total_applied = len(self._fetchall(LIST_HAPPY_STATUS))
+
+        if mig_id > total_applied or total_applied == 0:
+            callback(_no_mig_to("down"))
+            return
+        if mig_id > 0:
+            for _ in range(abs(mig_id - total_applied) + 1):
+                msg = self.down()
+                callback(msg)
+        else:
+            while True:
+                msg = self.down()
+                if msg.status == "warning":
+                    break
+                callback(msg)
+
+        last_id = mig_id if mig_id > 1 else 1
+        callback(_changed_up_to("down", last_id))
+
+    def list_happy_status(self) -> list[list[str]] | list[str]:
+        """Generate a table showing the status of migrations."""
+        migs = map(lambda p: MigData(p), self._migs_paths())
+        applied = self._fetchall(LIST_HAPPY_STATUS)
+        sorted_migs = sorted(migs, key=lambda mig: mig.id)
+        if not sorted_migs:
+            return [["Migrations directory is empty."]]
+
+        zipped = zip_longest(sorted_migs, applied)
+        migs_table: list[list[str | int]] = [
+            ["ID", "Name", "Status"],
+        ]
+
+        transformed = [
+            [mig.id, mig.name, "Applied 🟢" if status else "Pending 🟡"]
+            for mig, status in zipped
+        ]
+        migs_table.extend(transformed)
+        return migs_table
+
+    def close_connection(self):
+        """Close connection to DB."""
+        self._connection.close()
 
     def _execute(self, query: str, params: dict | tuple = ()) -> Cursor:
         """Execute a SQL query with optional parameters and return a cursor."""
@@ -177,187 +272,72 @@ class SQLiteBackend:
         self._connection.close()
         self._connection = connect(self._db_path)
 
-    def _get_mig_status(self, fname: str) -> list | None:
-        """Return mig status row if mig exist."""
-        params = {"fname": fname}
-        return self._fetchone(GET_HAPPY_STATUS_BY_FNAME, params)
+    @property
+    def _migs_qty(self) -> int:
+        """Return number of migrations inside migration directory"""
+        return sum(1 for _ in self._migs_paths())
 
-    def _parse_mig(self, mig_path: Path) -> Migration:
-        """Parses a migration file and returns a `Migration` object."""
-        spec = importlib.util.spec_from_file_location(
-            mig_path.name, mig_path
-        )
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        queries = getattr(module, "__steps__")
-        if not isinstance(queries, tuple):
-            raise ValueError(MIG_IS_NOT_TUPLE + mig_path.name)
-        return Migration(*self._get_mig_status(mig_path.stem), steps=queries)
+    def _migs_paths(self) -> Generator[Path, None, None]:
+        """Retrieve paths to migration files."""
+        return self._migs_dir.glob("????_*")
 
-    def happy_init(self) -> None:
-        """Initializes the Happy migration system by verifying the migrations
-        dir exist and create necessary tables if needed.
+    def _get_mig_path_by_id(self, mig_id: id) -> Path | None:
+        """Look for mig with chosen id."""
+        res = tuple(self._migs_dir.glob(f"{mig_id:04}_*.py"))
+        if not res:
+            return None
+        return res[0]
+
+    def _get_latest_mig_id(self) -> int:
+        """Retrieve the latest migration id from the migrations
+        directory or return 0 if empty.
         """
-        self._migs_dir.mkdir(parents=True, exist_ok=True)
-        self._execute(CREATE_HAPPY_STATUS_TABLE)
-        self._execute(CREATE_HAPPY_LOG_TABLE)
-        self._commit()
+        mig_paths: list[Path] | None = list(self._migs_paths())
+        if not mig_paths:
+            return 0
+        max_id_path = max(mig_paths, key=lambda p: p.stem)
+        return int(max_id_path.stem.split("_", maxsplit=1)[0])
 
-    def happy_boot(self) -> None:
-        """Initializes Happy and applies all migrations.
-        Required during app startup to integrate Happy into the app.
-        """
-        # TODO: Write test
-        self.happy_init()
-        self.apply_all_migs()
-        self.close_connection()
-
-    def _get_current_revision_id(self) -> int:
-        """Retrieves the latest migration revision id from the database
-        or return -1 if empty.
-        """
-        fname: list[str] | None = self._fetchone(GET_CURRENT_REVISION)
-        if not fname:
-            return -1
-        return int(fname[0].split("_", maxsplit=1)[0])
-
-    def create_mig(self, mig_name: str) -> None:
-        """Create new migration."""
-        mig_name = _mig_name_parser(mig_name)
-        mig_id: int = self._get_current_revision_id() + 1
-        self._create_mig_file(mig_name=mig_name, mig_id=mig_id)
-        self._add_mig_to_happy_status(mig_id=mig_id, mig_name=mig_name)
-
-    def _create_mig_file(self, mig_name: str, mig_id: int) -> None:
+    def _create_mig_file(self, mig_data: MigData) -> None:
         """Create new boilerplate migration file."""
-        name = f"{mig_id:04}_{mig_name}.py"
-        with open(self._migs_dir / name, 'w') as file:
+        with open(self._migs_dir / mig_data.file_name, "w") as file:
             file.write(MIGRATION_FILE_TEMPLATE)
 
-    def _add_mig_to_happy_status(self, mig_id: int, mig_name: str) -> None:
-        """Add new migration to db with status pending."""
+    def _add_mig_to_happy_status(self, mig_data: MigData) -> None:
+        """Add migration to _happy_status."""
         params = {
-            "mig_id": mig_id,
-            "fname": f"{mig_id:04}_{mig_name}",
-            "status": HAPPY_STATUS['P'],
+            "mig_id": mig_data.id,
+            "mig_name": mig_data.name,
         }
         self._connection.execute(ADD_HAPPY_STATUS, params)
+
+    def _remove_mig_from_happy_status(self, mig_data: MigData) -> None:
+        """Remove migrations from _happy_status."""
+        params = {"mig_id": mig_data.id}
+        self._connection.execute(REMOVE_HAPPY_STATUS, params)
+
+    def _apply_mig(self, mig_data: MigData) -> None:
+        """Apply a migration."""
+        mig = _parse_mig(mig_data.path)
+        self._exec_forward_steps(mig)
+        self._add_mig_to_happy_status(mig_data)
         self._commit()
 
-    def _get_pending_migs(self) -> list[Migration]:
-        """Return all pending migrations' names."""
-        params = {"status": HAPPY_STATUS["P"]}
-        rows = self._fetchall(GET_PENDING_MIGS_NAMES, params)
-        return [self._parse_mig(self._get_mig_path(row[0])) for row in rows]
+    def _rollback_mig(self, mig_data: MigData) -> None:
+        """Roll back a migration."""
+        mig = _parse_mig(mig_data.path)
+        self._exec_backward_steps(mig)
+        self._remove_mig_from_happy_status(mig_data)
+        self._commit()
 
-    def _exec_all_forward_steps(self, mig: Migration) -> None:
+    def _exec_forward_steps(self, mig: MigrationSQL) -> None:
         """Execute every forward Query from a Migration."""
         for query in mig.steps:
             self._execute(query.forward)
 
-    def _get_mig_path(self, fname: str) -> Path:
-        """Return full path to migration."""
-        return self._migs_dir / (fname + ".py")
-
-    def _change_happy_status(self, fname: str, status: Literal["A", "P"]) -> None:
-        """Updates the `applied` status of a specific migration
-        in the `_happy_status` database table.
-        """
-        params = {"status": HAPPY_STATUS[status], "fname": fname}
-        self._execute(UPDATE_HAPPY_STATUS, params)
-
-    def _apply_mig(self, mig: Migration) -> None:
-        self._exec_all_forward_steps(mig)
-        self._change_happy_status(mig.fname, "A")
-        self._commit()
-
-    def _rollback_mig(self, mig: Migration) -> None:
-        self._exec_all_backward_steps(mig)
-        self._change_happy_status(mig.fname, "P")
-        self._commit()
-
-    def _get_all_migs_names_up_to(
-        self,
-        mig_id: int,
-        status: Literal["A", "P"],
-        order: Literal["ASC", "DESC"]
-    ) -> list[Migration]:
-        """Retrieves all pending migration names from
-        the `_happy_status` table up to a specified migration ID.
-        """
-        rows = self._fetchall(
-            GET_MIGS_UP_TO,
-            {"mig_id": mig_id, "status": HAPPY_STATUS[status], "order": order}
-
-        )
-        return [self._parse_mig(self._get_mig_path(row[0])) for row in rows]
-
-    def _exec_all_backward_steps(self, mig: Migration) -> None:
+    def _exec_backward_steps(self, mig: MigrationSQL) -> None:
         """Rolls back a migration by executing each backward SQL statement
         from the last Query to the first.
         """
         for query in mig.steps[::-1]:
             self._execute(query.backward)
-
-    def close_connection(self):
-        """Close connection to DB."""
-        self._connection.close()
-
-    def apply_last(self):
-        """
-        Applies the last migration if available.
-        If no migration is found, prints a message to the console.
-        """
-        pass
-
-    def rollback_last(self):
-        """
-        Rolls back the last applied migration if available.
-        If no migration is found, prints a message to the console.
-        """
-        pass
-
-    def apply_all_migs(self) -> None:
-        """Apply all migrations."""
-        migs = self._get_pending_migs()
-        for mig in migs:
-            self._apply_mig(mig)
-
-    def apply_migs_up_to(self, mig_id: int) -> None:
-        """Applies all pending migrations up to the specified migration ID."""
-        migs = self._get_all_migs_names_up_to(mig_id, "P", "ASC")
-        for mig in migs:
-            self._apply_mig(mig)
-
-    def rollback_migs_up_to(self, mig_id: int) -> None:
-        """Roll back all applied migrations up to the specified migration ID."""
-        migs = self._get_all_migs_names_up_to(mig_id, "A", "DESC")
-        for mig in migs:
-            self._rollback_mig(mig)
-
-    def rollback_last_mig(self) -> bool:
-        """Roll back the last applied migration and return True.
-        If no migration is available to roll back return False.
-        """
-        name = self._fetchone(
-            GET_LAST_BY_STATUS,
-            (HAPPY_STATUS["A"],)
-        )
-        if name is None:
-            return False
-        mig_path = self._get_mig_path(name[0])
-        mig = self._parse_mig(mig_path)
-        self._exec_all_backward_steps(mig)
-        self._change_happy_status(mig.fname, "P")
-        self._commit()
-        return True
-
-    def list_happy_logs(self) -> list:
-        """Return list of all logs from _happy_log."""
-        # TODO: Test when table is ok
-        return self._fetchall(LIST_HAPPY_LOG)
-
-    def list_happy_status(self) -> list:
-        """Return list of all statuses from _happy_status."""
-        # TODO: Test when table is ok
-        return self._fetchall(LIST_HAPPY_STATUS)

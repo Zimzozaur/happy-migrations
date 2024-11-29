@@ -13,7 +13,7 @@ jedi_table = Step(
     """,
     backward="""
     DROP TABLE jedi;
-    """
+    """,
 )
 
 sith_table = Step(
@@ -25,7 +25,7 @@ sith_table = Step(
     """,
     backward="""
     DROP TABLE sith;
-    """
+    """,
 )
 
 rogue_table = Step(
@@ -37,7 +37,7 @@ rogue_table = Step(
     """,
     backward="""
     DROP TABLE rogue;
-    """
+    """,
 )
 
-__steps__: tuple = jedi_table, sith_table, rogue_table
+__steps__: tuple[Step, ...] = jedi_table, sith_table, rogue_table

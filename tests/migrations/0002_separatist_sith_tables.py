@@ -16,4 +16,18 @@ separatist_table = Step(
     """
 )
 
-__steps__: tuple = separatist_table,
+
+sith_table = Step(
+    forward="""
+    CREATE TABLE sith (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL
+    );
+    """,
+    backward="""
+    DROP TABLE sith;
+    """
+)
+
+
+__steps__: tuple[Step, ...] = separatist_table, sith_table
