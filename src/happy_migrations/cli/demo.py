@@ -109,12 +109,12 @@ theme = tokyo-night
 
 @click.group()
 def demo():
-    """Test quickly Happy Migrations."""
+    """CLI entry point to try out Happy."""
 
 
 @demo.command()
 def run():
-    """Create demo ini + db + migrations to play with."""
+    """Sets up everything needed for testing."""
     if not _migs_dir.exists():
         _migs_dir.mkdir()
         for name, file in zip(_names, _files):
