@@ -104,7 +104,7 @@ class SQLiteBackend:
             return HappyMsg(
                 status="success",
                 header="Initialized: ",
-                message="Hopefully no tears 🤗",
+                message="Smooth Transitions, Zero Tears.",
             )
         return HappyMsg(
             status="warning",
