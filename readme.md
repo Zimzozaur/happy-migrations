@@ -10,7 +10,7 @@ Get a feel of **Happy** in minutes.
 
 Install Happy in your virtual environment:
 ```shell
-pip install happy-migration
+pip install happy-migrations
 ```
 Run the demo to generate everything you need in your current directory:
 ```shell
