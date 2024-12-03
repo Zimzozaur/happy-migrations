@@ -3,15 +3,8 @@ from pathlib import Path
 from typing import cast
 import re
 
-
 from happy_migrations._data_classes import HappyIni
-
-_HAPPY_INI_TEMPLATE = """\
-[Settings]
-db_path =
-migs_dir =
-theme = dark
-"""
+from happy_migrations._templates import _HAPPY_INI_TEMPLATE
 
 
 def create_happy_ini(path: Path) -> bool:

@@ -17,7 +17,9 @@ first_step = Step(
 __steps__: tuple[Step, ...] = first_step,
 """
 
-INI_TEMPLATE = """\
-[HAPPY]
-db_path = path\\to\\db
+_HAPPY_INI_TEMPLATE = """\
+[Settings]
+db_path =
+migs_dir =
+theme =
 """
